@@ -1,0 +1,54 @@
+using Random
+using Plots
+
+Ne = 800
+Ni = 200
+re = ones(Ne)
+ri = ones(Ni)
+a = vcat(0.02 .* ones(Ne), 0.02 .+ 0.08 .* ri)
+b = vcat(0.2 .* ones(Ne), 0.25 .- 0.05 .* ri)
+c = vcat(-70 .+ 15 .* re .^ 2, -55 .* ones(Ni))
+d = vcat(4 .- 6 .* re .^ 2, 2 .* ones(Ni))
+S = hcat(0.5 .* ones(Ne + Ni, Ne), -rand(Ne + Ni, Ni))
+dt = 0.5
+
+v = -65 .* ones(Ne + Ni)
+u = b .* v
+firings = []
+T = 1000
+
+v1=[]
+u1 = []
+
+for t = 1:T
+    I = vcat(5 .* randn(Ne), 2 .* randn(Ni))
+    fired = findall(x -> x >= 30, v)
+    if isempty(fired)
+        append!(firings, [0])
+    else 
+        append!(firings, [fired])
+    end
+    v[fired] .= c[fired]
+    u[fired] .= u[fired] .+ d[fired]
+    I .= I .+ sum(S[:, fired], dims=2)
+    for i in 1:1/dt
+        v .= v .+ dt .* (0.04 .* v .^ 2 .+ 5 .* v .+ 140 .- u .+ I)
+    end
+    u .= u .+ a .* (b .* v .- u)
+    append!(v1, v[1])
+    append!(u1, u[1])
+end
+
+
+P = plot(v1, legend=false)
+plot!(u1)
+
+Sc = plot(legend=false)
+for (i, spike) in enumerate(firings)
+    scatter!(i*ones(length(spike)), spike, markershape=:vline)
+end
+current()
+
+plot(Sc, P, layout=(2,1))
+
+# println(v1)

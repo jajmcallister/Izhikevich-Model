@@ -1,0 +1,75 @@
+using Random
+using Plots
+
+params = Dict("a" => 0.02, "b" => 0.2, "c" => -55, "d" => 4)
+neuron_type = "excit"
+voltage_pick = 30
+simulation_time = 100
+time_step = 0.1
+T = simulation_time/time_step
+
+neurons = 1
+current_value = 20
+current_start = trunc(Int, 0.2*T)
+current_finish = trunc(Int, T)
+
+Random.seed!(1)
+
+# Parameters according Izhikevich article
+random_factor = rand()
+
+if neuron_type in ("excitory", "excit")
+    a = params["a"]
+    b = params["b"]
+    c = params["c"] + 15 * random_factor^2
+    d = params["d"] - 6 * random_factor^2
+elseif neuron_type in ("inhibitory", "inib")
+    a = params["a"] + 0.08 * random_factor
+    b = params["b"] - 0.05 * random_factor
+    c = params["c"]
+    d = params["d"]
+end
+
+time = 0:time_step:simulation_time
+
+I = zeros(length(time))
+I[current_start:current_finish] .= current_value
+
+v = zeros(length(time))
+v[1] = c
+
+u = zeros(length(time))
+u[1] = b * v[1]
+
+fired = []
+
+function dvdt(v, u, I)
+    return 0.04 * v^2 + 5 * v + 140 - u + I
+end
+
+function dudt(v, u)
+    return a * (b * v - u)
+end
+
+for t in 2:length(time)
+    vc = v[t - 1]
+    uc = u[t - 1]
+    Ic = I[t - 1]
+
+    if vc >= voltage_pick
+        v[t] = c
+        u[t] = uc + d
+        push!(fired, t)
+    else
+        dv = dvdt(vc, uc, Ic)
+        du = dudt(vc, uc)
+        v[t] = vc + dv * time_step
+        u[t] = uc + du * time_step
+    end
+end
+
+plotv = plot(v)
+plotu = plot(u)
+plotIt = plot(I)
+
+plot(plotv, plotu, plotIt, layout=(3,1), legend=false)

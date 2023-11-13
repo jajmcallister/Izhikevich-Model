@@ -1,0 +1,257 @@
+using Random, Distributions
+using Plots
+
+
+lower_limit = 0.4
+upper_limit = 0.6
+function generate_spike_trains_with_fixed_pattern(N, T, λ, fixed_pattern)
+    spike_trains = []
+
+    for i in 1:N
+        spike_times = []
+        t = 0
+
+        while t < lower_limit*T # Stop generating spikes at time lower_limitT
+            next_interval = rand(Exponential(1/λ))
+            t += next_interval
+            if t < lower_limit*T
+                push!(spike_times, t)
+            end
+        end
+
+        tt = upper_limit*T # Start generating spikes again at time upper_limitT
+        while tt < T 
+            next_intervall = rand(Exponential(1/λ))
+            tt += next_intervall
+            if tt < T
+                push!(spike_times, tt)
+            end
+        end
+
+        for j in 1:length(fixed_pattern[i])
+            push!(spike_times, fixed_pattern[i][j])
+        end
+
+        # push!(spike_times, fixed_pattern[i])
+        push!(spike_trains, spike_times)
+    end
+
+    return spike_trains
+end
+
+function generate_fixed_pattern(N, T, λ)
+    spike_trains = []
+
+    for i in 1:N
+        spike_times = []
+        t = lower_limit*T  # Start at time lower_limitT
+
+        while t < upper_limit*T # Stop generating spikes at time upper_limitT
+            next_interval = rand(Exponential(1/λ))
+            t += next_interval
+            if t < upper_limit*T
+                push!(spike_times, t)
+            end
+        end
+
+        push!(spike_trains, spike_times)
+    end
+
+    return spike_trains
+end
+
+function K_alpha(del_t, tau_rr, tau_dd)
+    eta = tau_dd/tau_rr
+    I_norm = (eta^(eta/(eta-1))/(eta-1))
+    if del_t > 0
+        K = -1*I_norm*(exp(-del_t/tau_rr) - exp(-del_t/tau_dd))
+    else
+        K = 0
+    end
+    return K
+end 
+
+function searchsortednearest(a,x)
+    idx = searchsortedfirst(a,x)
+    if (idx==1); return idx; end
+    if (idx>length(a)); return length(a); end
+    if (a[idx]==x); return idx; end
+    if (abs(a[idx]-x) < abs(a[idx-1]-x))
+       return idx
+    else
+       return idx-1
+    end
+end
+
+#the exponential STDP weight change rule
+function diff_del_we(diff_t)
+    if diff_t < 0
+      return A_ltp * exp(diff_t/tau_ltp)
+    elseif diff_t == 0
+      return 0
+    else
+      return A_ltd * exp(-diff_t/tau_ltd) 
+    end
+end
+
+params = Dict("a" => 0.02, "b" => 0.2, "c" => -55, "d" => 3)
+neuron_type = "excit"
+voltage_pick = 30
+simulation_time = 100
+dt = 0.1
+T = simulation_time/dt
+timet = 0:dt:simulation_time
+tau_ltp = 17*dt
+tau_ltd = 34*dt
+A_ltp = 1
+A_ltd = -0.5
+tau_e_r = 0.5*dt
+tau_i_r = 1*dt
+tau_e_d = 3*dt
+tau_i_d = 5*dt
+
+lambda = 0.01
+Ne = 400
+Ni = 100
+
+fixedE = generate_fixed_pattern(Ne, T, lambda)
+fixedI = generate_fixed_pattern(Ni, T, lambda)
+
+Espiketrains = generate_spike_trains_with_fixed_pattern(Ne, T, lambda, fixedE)
+Ispiketrains = generate_spike_trains_with_fixed_pattern(Ni, T, lambda, fixedI)
+
+spike_trains = []
+append!(spike_trains, Espiketrains)
+append!(spike_trains, Ispiketrains)
+
+sc = plot()
+for (i, spikes) in enumerate(spike_trains)
+    scatter!(spikes, i * ones(length(spikes)), markercolor="black", markershape=:vline, markersize = 1, legend=false)
+end
+vline!([lower_limit*T, upper_limit*T], color="red")
+hline!([Ne+0.5], color = "yellow")
+current()
+
+
+weights_e = [rand(Ne) for i in 1:length(timet)]
+weights_i = [rand(Ni) for i in 1:length(timet)]
+
+Random.seed!(1)
+
+# Parameters according Izhikevich article
+random_factor = rand()
+
+if neuron_type in ("excitory", "excit")
+    a = params["a"]
+    b = params["b"]
+    c = params["c"] + 15 * random_factor^2
+    d = params["d"] - 6 * random_factor^2
+elseif neuron_type in ("inhibitory", "inib")
+    a = params["a"] + 0.08 * random_factor
+    b = params["b"] - 0.05 * random_factor
+    c = params["c"]
+    d = params["d"]
+end
+
+
+
+I = zeros(length(timet))
+# I[current_start:current_finish] .= current_value
+
+v = zeros(length(timet))
+v[1] = c
+
+u = zeros(length(timet))
+u[1] = b * v[1]
+
+
+function dvdt(v, u, I)
+    return 0.04 * v^2 + 5 * v + 140 - u + I
+end
+
+function dudt(v, u)
+    return a * (b * v - u)
+end
+
+last_spiketimes = []
+
+for t in 2:length(timet)
+    vc = v[t - 1]
+    uc = u[t - 1]
+
+    sumE = 0
+    for i in 1:Ne
+        idxe = findall(x -> x < t, Espiketrains[i])
+        sume = 0
+        for l in Espiketrains[i][idxe]
+            sume += 50*K_alpha(t-l, tau_e_r, tau_e_d)
+        end
+        sumE += weights_e[t][i]*sume
+    end
+
+    sumI = 0
+    for m in 1:Ni
+        idxi = findall(x -> x < t, Ispiketrains[m])
+        sumi = 0
+        for k in Ispiketrains[m][idxi]
+            sumi += K_alpha(t-k, tau_i_r, tau_i_d)
+        end
+        sumI += weights_i[t][m]*sumi
+    end
+
+    I[t] = sumE - sumI
+
+
+    if vc >= voltage_pick
+        v[t] = c
+        u[t] = uc + d
+        push!(last_spiketimes, t)
+    else
+        dv = dvdt(vc, uc, I[t])
+        du = dudt(vc, uc)
+        v[t] = vc + dv * dt
+        u[t] = uc + du * dt
+    end
+
+
+    for k in 1:Ne
+        if isempty(last_spiketimes) == false && isempty(Espiketrains[k]) == false
+            weights_e[t][k] = weights_e[t-1][k]+ diff_del_we(1*(last_spiketimes[end]-Espiketrains[k][searchsortednearest(Espiketrains[k],last_spiketimes[end])]))
+        else
+            weights_e[t][k] = weights_e[t-1][k]
+        end
+    end
+
+    for k in 1:Ni
+        if isempty(last_spiketimes) == false &&  isempty(Ispiketrains[k]) == false
+            weights_i[t][k] = weights_i[t-1][k]+ diff_del_we(1*(last_spiketimes[end] - Ispiketrains[k][searchsortednearest(Ispiketrains[k],last_spiketimes[end])]))
+        else
+            weights_i[t][k] = weights_i[t-1][k] 
+        end
+    end
+
+
+end
+
+plotv = plot(v, title="Membrane Voltage")
+plotu = plot(u)
+plotIt = plot(I, title="Input Current")
+
+
+
+plotweights = plot(title="Weights")
+for i in 1:10
+    plot!(getindex.(weights_e, i), legend=false)
+end
+
+
+F = plot(sc, plotIt, plotv, plotweights, layout=(4,1), legend=false)
+
+plot!(size=(800,600))
+
+
+# t = -10:0.01:10
+# y = diff_del_we.(t)
+# plot(t, y)
+
+# # plot(sc, plotv, plotu, layout=(3,1), legend=false)
